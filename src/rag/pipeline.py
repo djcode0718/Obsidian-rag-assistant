@@ -65,7 +65,20 @@ class RAGPipeline:
 
         self.groq_client = GroqClient(api_key=g_key, model=config.groq_model)
         self.gemini_client = GeminiClient(api_key=gem_key, model=config.gemini_model)
-        self.router = LLMRouter(groq_api_key=g_key, gemini_api_key=gem_key)
+        self._router = LLMRouter(groq_api_key=g_key, gemini_api_key=gem_key)
+
+    @property
+    def router(self) -> LLMRouter:
+        """Returns the LLMRouter instance, auto-initializing if called on a cached instance."""
+        if not hasattr(self, "_router") or self._router is None:
+            g_key = getattr(self.groq_client, "api_key", config.groq_api_key) if hasattr(self, "groq_client") else config.groq_api_key
+            gem_key = getattr(self.gemini_client, "api_key", config.gemini_api_key) if hasattr(self, "gemini_client") else config.gemini_api_key
+            self._router = LLMRouter(groq_api_key=g_key, gemini_api_key=gem_key)
+        return self._router
+
+    @router.setter
+    def router(self, val: LLMRouter) -> None:
+        self._router = val
 
     def update_keys(self, groq_key: Optional[str] = None, gemini_key: Optional[str] = None) -> None:
         """Dynamically reconfigures API keys passed from the Streamlit UI."""

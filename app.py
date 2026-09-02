@@ -86,6 +86,14 @@ def get_rag_pipeline() -> RAGPipeline:
 
 pipeline = get_rag_pipeline()
 
+# Guarantee router is available on older cached instances without requiring server restart
+if not hasattr(pipeline, "router") or pipeline.router is None:
+    from src.llm.router import LLMRouter
+    pipeline.router = LLMRouter(
+        groq_api_key=getattr(pipeline.groq_client, "api_key", config.groq_api_key),
+        gemini_api_key=getattr(pipeline.gemini_client, "api_key", config.gemini_api_key),
+    )
+
 
 # --- Auto-Ingest on First Startup (Amendment 2) ---
 # Ephemeral hosting platforms (Streamlit Cloud, Hugging Face Spaces) may boot with
