@@ -40,5 +40,15 @@ def main():
     else:
         print("Gemini Status: KEY NOT DETECTED")
 
+    print("\n[4/4] Testing LLMRouter (Auto Fallback Chain)...")
+    try:
+        res_router = p.query("What architectural patterns are used for scalability?", provider="auto")
+        print("LLMRouter Status: SUCCESS")
+        print(f"Provider: {res_router.provider} ({res_router.model})")
+        print("Answer preview:", res_router.answer[:200].replace('\n', ' '), "...")
+        print(f"Citations count: {len(res_router.citations)}")
+    except Exception as e:
+        print("LLMRouter Status: FAILED -", e)
+
 if __name__ == "__main__":
     main()
