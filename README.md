@@ -42,9 +42,11 @@
                        │                                                            │
                        ▼                                                            ▼
   ┌─────────────────────────────────────────┐                  ┌─────────────────────────────────────────┐
-  │ chroma_store.py: Persistent ChromaDB    │                  │ LLM Provider (Swappable with 1x retry): │
-  │ collection saved to ./data/chroma_db    │                  │ - Groq LLaMA-3.3-70B (Primary, >300 t/s)│
-  └─────────────────────────────────────────┘                  │ - Google Gemini Flash (Alternative)     │
+  │ chroma_store.py: Persistent ChromaDB    │                  │ router.py: 4-Model Fallback Chain:      │
+  │ collection saved to ./data/chroma_db    │                  │ 1. Groq (llama-3.3-70b-versatile)       │
+  └─────────────────────────────────────────┘                  │ 2. Groq (openai/gpt-oss-120b)           │
+                                                               │ 3. Gemini (gemini-2.5-flash)            │
+                                                               │ 4. Gemini (gemini-1.5-flash)            │
                                                                └────────────────────┬────────────────────┘
                                                                                     │
                                                                                     ▼
@@ -64,10 +66,13 @@
 - **Header-Aware Chunking**: We engineered a parser that splits markdown by semantic headers (`#` through `####`) first. Any section exceeding ~500 tokens undergoes sliding-window token chunking with a 50-token overlap, while prepending the document title and section heading to each chunk to retain global document hierarchy.
 - **Zero-Cost, Local Dense Embeddings**: Embeddings run 100% locally via `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions, normalized cosine space). This eliminates embedding API costs, removes external network hops during indexing, and guarantees data privacy.
 - **Local Persistent Vector Store**: Indexed into ChromaDB (`PersistentClient`) with cosine similarity. Metadata is preserved across all chunks (source note, heading, token count, file path).
-- **Swappable Multi-Provider LLM Tiering**:
-  - **Primary**: Groq API utilizing `llama-3.3-70b-versatile` running on Groq LPUs for instant, sub-second responses.
-  - **Alternative / Fallback**: Google Gemini Flash via the official `google-generativeai` SDK.
-  - **Fault Resilience**: 1-time automatic backoff retry on transient errors or HTTP 429 rate limits, followed by a graceful non-crashing UI warning banner if both attempts fail.
+- **4-Model Automatic Fallback Chain**:
+  - To prevent evaluation disruption from rate limits or transient errors, the pipeline defaults to an automatic 4-model chain orchestrator (`LLMRouter`):
+    1. **Groq (`llama-3.3-70b-versatile`)**: Primary high-speed reasoning model (>300 tokens/sec).
+    2. **Groq (`openai/gpt-oss-120b`)**: Intra-provider fallback within Groq if the primary hits rate limits.
+    3. **Google Gemini (`gemini-2.5-flash`)**: Inter-provider fallback for high-context synthesis.
+    4. **Google Gemini (`gemini-1.5-flash`)**: Final fallback ensuring high availability.
+  - Per model, a 1-time retry with backoff is performed before advancing to the next model in the chain. Manual model selection remains available in the sidebar for targeted evaluation.
 - **Ephemeral Cloud Readiness**: Automatic first-load detection auto-indexes the bundled `sample_vault/` if the vector database is uninitialized, ensuring reviewers on Streamlit Cloud or Hugging Face Spaces are greeted with a fully operational demo immediately.
 
 ---
@@ -113,8 +118,9 @@
 │   ├── llm/
 │   │   ├── __init__.py
 │   │   ├── base.py                # Abstract LLM client interface & error classes
-│   │   ├── groq_client.py         # Groq client with 1-time rate limit backoff retry
-│   │   └── gemini_client.py       # Google Gemini client (google-generativeai)
+│   │   ├── groq_client.py         # Groq client with model configuration & 1-time retry
+│   │   ├── gemini_client.py       # Google Gemini client (google-generativeai)
+│   │   └── router.py              # Multi-model 4-stage automatic fallback chain
 │   └── rag/
 │       ├── __init__.py
 │       └── pipeline.py            # Retrieval, prompt assembly, and citation synthesis

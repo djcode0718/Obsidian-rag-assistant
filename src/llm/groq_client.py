@@ -45,26 +45,6 @@ class GroqClient(BaseLLMClient):
                 raise LLMError(f"Failed to initialize Groq client: {e}", provider=self.provider_name) from e
         return self._client
 
-    def _resolve_model(self, client) -> str:
-        """Verifies or resolves an active model if the default is unavailable."""
-        preferred_candidates = [
-            self.model,
-            "openai/gpt-oss-120b",
-            "llama-3.3-70b-versatile",
-            "openai/gpt-oss-20b",
-            "qwen/qwen3.6-27b",
-            "llama-3.1-8b-instant",
-        ]
-        try:
-            available = {m.id for m in client.models.list().data}
-            for candidate in preferred_candidates:
-                if candidate in available:
-                    self.model = candidate
-                    return candidate
-        except Exception:
-            pass
-        return self.model
-
     def generate(
         self,
         prompt: str,
@@ -73,7 +53,6 @@ class GroqClient(BaseLLMClient):
     ) -> LLMResponse:
         """Executes completion with a 1-time retry on transient/rate-limit errors."""
         client = self._get_client()
-        active_model = self._resolve_model(client)
 
         messages = []
         if system_prompt:
@@ -86,7 +65,7 @@ class GroqClient(BaseLLMClient):
         for attempt in range(1, max_attempts + 1):
             try:
                 response = client.chat.completions.create(
-                    model=active_model,
+                    model=self.model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=1024,
@@ -106,7 +85,7 @@ class GroqClient(BaseLLMClient):
                 return LLMResponse(
                     text=clean_text,
                     provider=self.provider_name,
-                    model=active_model,
+                    model=self.model,
                     tokens_used=tokens,
                 )
 
@@ -121,13 +100,12 @@ class GroqClient(BaseLLMClient):
                     time.sleep(2.0)
                     continue
                 else:
-                    # Final attempt failed
-                    clean_err = f"Groq Error: {str(exc)}"
+                    clean_err = f"Groq Error ({self.model}): {str(exc)}"
                     if is_rate_limit:
                         clean_err = (
-                            "Groq Rate Limit Exceeded (HTTP 429). The system attempted an automatic retry, "
-                            "but the rate limit remains active. Please wait a few seconds or switch to Gemini Flash."
+                            f"Groq Rate Limit Exceeded on {self.model} (HTTP 429). The system attempted an automatic retry, "
+                            "but the rate limit remains active."
                         )
                     raise LLMError(clean_err, provider=self.provider_name, is_rate_limit=is_rate_limit) from exc
 
-        raise LLMError(f"Groq invocation failed: {last_exception}", provider=self.provider_name)
+        raise LLMError(f"Groq invocation failed on {self.model}: {last_exception}", provider=self.provider_name)

@@ -14,6 +14,7 @@ from src.vectorstore.chroma_store import ChromaStore, RetrievedChunk
 from src.llm.base import BaseLLMClient, LLMResponse, LLMError
 from src.llm.groq_client import GroqClient
 from src.llm.gemini_client import GeminiClient
+from src.llm.router import LLMRouter
 
 
 @dataclass
@@ -64,6 +65,7 @@ class RAGPipeline:
 
         self.groq_client = GroqClient(api_key=g_key, model=config.groq_model)
         self.gemini_client = GeminiClient(api_key=gem_key, model=config.gemini_model)
+        self.router = LLMRouter(groq_api_key=g_key, gemini_api_key=gem_key)
 
     def update_keys(self, groq_key: Optional[str] = None, gemini_key: Optional[str] = None) -> None:
         """Dynamically reconfigures API keys passed from the Streamlit UI."""
@@ -73,6 +75,7 @@ class RAGPipeline:
         if gemini_key is not None:
             self.gemini_client.api_key = gemini_key.strip()
             self.gemini_client._model_obj = None
+        self.router.update_keys(groq_key=groq_key, gemini_key=gemini_key)
 
     def ingest_vault(
         self,
@@ -130,12 +133,16 @@ class RAGPipeline:
             "files": [n.filename for n in notes],
         }
 
-    def get_llm_client(self, provider: str = "groq") -> BaseLLMClient:
-        """Resolves the requested LLM client by provider name."""
-        provider_clean = provider.strip().lower()
-        if "gemini" in provider_clean:
+    def get_llm_client(self, provider: str = "auto") -> BaseLLMClient:
+        """Resolves the requested LLM client by provider name or returns LLMRouter."""
+        provider_clean = (provider or "auto").strip().lower()
+        if provider_clean in ["auto", "router", "chain"]:
+            return self.router
+        elif "gemini" in provider_clean:
             return self.gemini_client
-        return self.groq_client
+        elif "groq" in provider_clean:
+            return self.groq_client
+        return self.router
 
     def build_prompt(self, question: str, retrieved_chunks: List[RetrievedChunk]) -> tuple[str, str]:
         """Assembles a strict grounding prompt with numbered source contexts.
@@ -182,7 +189,7 @@ class RAGPipeline:
     def query(
         self,
         question: str,
-        provider: str = "groq",
+        provider: str = "auto",
         top_k: int = 4,
         temperature: float = 0.2,
     ) -> RAGResult:

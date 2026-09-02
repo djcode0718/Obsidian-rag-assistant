@@ -114,3 +114,101 @@ def test_rag_prompt_construction(sample_vault_dir):
         assert "CRITICAL RULES" in sys_p
         assert "CONTEXT CHUNK 1" in user_p
         assert "Explain event streaming" in user_p
+
+
+def test_router_unconfigured_and_skipping():
+    from src.llm.router import LLMRouter
+
+    # Both blank
+    router_empty = LLMRouter(groq_api_key="", gemini_api_key="")
+    assert not router_empty.is_configured()
+    with pytest.raises(LLMError) as exc_info:
+        router_empty.generate("test prompt")
+    assert "No LLM providers are configured" in str(exc_info.value)
+
+    # Only Gemini configured
+    router_gemini = LLMRouter(groq_api_key="", gemini_api_key="dummy_gemini_key")
+    status = router_gemini.get_chain_status()
+    assert len(status) == 4
+    # Groq models skipped
+    assert not status[0]["is_configured"]
+    assert not status[1]["is_configured"]
+    # Gemini models ready
+    assert status[2]["is_configured"]
+    assert status[3]["is_configured"]
+
+
+def test_router_fallthrough_on_simulated_failure(monkeypatch):
+    from src.llm.router import LLMRouter
+    from src.llm.base import BaseLLMClient, LLMResponse, LLMError
+
+    router = LLMRouter(groq_api_key="dummy_groq", gemini_api_key="dummy_gemini")
+
+    call_history = []
+
+    class MockFailingClient(BaseLLMClient):
+        def __init__(self, provider, model):
+            self._provider = provider
+            self._model = model
+        @property
+        def provider_name(self): return self._provider
+        @property
+        def model_name(self): return self._model
+        def is_configured(self): return True
+        def generate(self, prompt, system_prompt=None, temperature=0.2):
+            call_history.append((self._provider, self._model))
+            raise LLMError("Simulated 429 Rate Limit", provider=self._provider, is_rate_limit=True)
+
+    class MockSuccessClient(BaseLLMClient):
+        def __init__(self, provider, model):
+            self._provider = provider
+            self._model = model
+        @property
+        def provider_name(self): return self._provider
+        @property
+        def model_name(self): return self._model
+        def is_configured(self): return True
+        def generate(self, prompt, system_prompt=None, temperature=0.2):
+            call_history.append((self._provider, self._model))
+            return LLMResponse(text="Success from fallback", provider=self._provider, model=self._model)
+
+    def mock_create_client(self, provider, model):
+        # Model 1 fails, Model 2 succeeds
+        if model == "llama-3.3-70b-versatile":
+            return MockFailingClient(provider, model)
+        return MockSuccessClient(provider, model)
+
+    monkeypatch.setattr(LLMRouter, "_create_client", mock_create_client)
+
+    response = router.generate("What is our database strategy?")
+    assert response.text == "Success from fallback"
+    assert response.model == "openai/gpt-oss-120b"
+    assert len(call_history) == 2
+    assert call_history[0] == ("groq", "llama-3.3-70b-versatile")
+    assert call_history[1] == ("groq", "openai/gpt-oss-120b")
+
+
+def test_router_all_models_fail(monkeypatch):
+    from src.llm.router import LLMRouter
+    from src.llm.base import BaseLLMClient, LLMError
+
+    router = LLMRouter(groq_api_key="dummy_groq", gemini_api_key="dummy_gemini")
+
+    class MockAlwaysFailClient(BaseLLMClient):
+        def __init__(self, provider, model):
+            self._provider = provider
+            self._model = model
+        @property
+        def provider_name(self): return self._provider
+        @property
+        def model_name(self): return self._model
+        def is_configured(self): return True
+        def generate(self, prompt, system_prompt=None, temperature=0.2):
+            raise LLMError(f"{self._model} unavailable", provider=self._provider)
+
+    monkeypatch.setattr(LLMRouter, "_create_client", lambda self, p, m: MockAlwaysFailClient(p, m))
+
+    with pytest.raises(LLMError) as exc_info:
+        router.generate("test question")
+    assert "All models in the automatic fallback chain failed" in str(exc_info.value)
+

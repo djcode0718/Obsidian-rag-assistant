@@ -181,14 +181,38 @@ with st.sidebar:
     # LLM Provider Configuration
     st.markdown("### 🤖 LLM Provider Settings")
 
-    provider_choice = st.selectbox(
-        "Active LLM Provider:",
-        options=["Groq (Primary - Fast)", "Google Gemini Flash (Alternative)"],
+    llm_mode = st.radio(
+        "Execution Mode:",
+        options=["Auto Fallback Chain (Recommended)", "Manual Model Selection"],
         index=0,
-        help="Select which provider generates answers. Both run on free-tier APIs.",
+        help="Auto Fallback Chain tries all 4 models in order: Groq llama-3.3 -> Groq gpt-oss-120b -> Gemini 2.5 -> Gemini 1.5.",
     )
-    is_groq = "Groq" in provider_choice
-    active_provider_key = "groq" if is_groq else "gemini"
+
+    if llm_mode == "Manual Model Selection":
+        manual_choice = st.selectbox(
+            "Select Single Model:",
+            options=[
+                "Groq (llama-3.3-70b-versatile)",
+                "Groq (openai/gpt-oss-120b)",
+                "Google Gemini (gemini-2.5-flash)",
+                "Google Gemini (gemini-1.5-flash)",
+            ],
+            index=0,
+        )
+        if "Groq" in manual_choice:
+            active_provider_key = "groq"
+            if "gpt-oss-120b" in manual_choice:
+                pipeline.groq_client.model = "openai/gpt-oss-120b"
+            else:
+                pipeline.groq_client.model = "llama-3.3-70b-versatile"
+        else:
+            active_provider_key = "gemini"
+            if "gemini-1.5-flash" in manual_choice:
+                pipeline.gemini_client.model = "gemini-1.5-flash"
+            else:
+                pipeline.gemini_client.model = "gemini-2.5-flash"
+    else:
+        active_provider_key = "auto"
 
     # API Keys Configuration
     env_groq_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -210,20 +234,15 @@ with st.sidebar:
         help="Get a free key from aistudio.google.com",
     )
 
-    # Sync keys to pipeline
+    # Sync keys to pipeline and router
     pipeline.update_keys(groq_key=groq_input, gemini_key=gemini_input)
 
-    # Status Indicators for Keys
-    st.markdown("##### Key Status")
-    if groq_input:
-        st.caption("🟢 Groq API Key: Configured")
-    else:
-        st.caption("🔴 Groq API Key: Missing")
-
-    if gemini_input:
-        st.caption("🟢 Gemini API Key: Configured")
-    else:
-        st.caption("🔴 Gemini API Key: Missing")
+    # 4-Model Fallback Chain Key Status Panel
+    st.markdown("##### ⛓️ 4-Model Fallback Status")
+    chain_status = pipeline.router.get_chain_status()
+    for idx, item in enumerate(chain_status, 1):
+        status_label = "🟢 Ready" if item["is_configured"] else "🔴 Missing Key"
+        st.caption(f"**[{idx}] {item['provider']}** `{item['model']}`: {status_label}")
 
     # Retrieval Tuning
     with st.expander("⚙️ Retrieval Parameters", expanded=False):
