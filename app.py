@@ -222,28 +222,40 @@ with st.sidebar:
     else:
         active_provider_key = "auto"
 
-    # API Keys Configuration
+    # API Keys Configuration (Never display raw secrets in UI values)
     env_groq_key = os.getenv("GROQ_API_KEY", "").strip()
     env_gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
 
+    st.markdown("##### API Key Configuration")
+
+    groq_placeholder = "Configured via .env (enter to override)" if env_groq_key else "gsk_... (paste here)"
     groq_input = st.text_input(
         "Groq API Key:",
-        value=env_groq_key,
+        value="",
         type="password",
-        placeholder="gsk_...",
-        help="Get a free key from console.groq.com",
+        placeholder=groq_placeholder,
+        help="Leave blank to use key from .env / environment variables.",
     )
+    if env_groq_key and not groq_input:
+        st.caption("🔒 *Loaded securely from environment (.env)*")
 
+    gemini_placeholder = "Configured via .env (enter to override)" if env_gemini_key else "AIzaSy... (paste here)"
     gemini_input = st.text_input(
         "Gemini API Key:",
-        value=env_gemini_key,
+        value="",
         type="password",
-        placeholder="AIzaSy...",
-        help="Get a free key from aistudio.google.com",
+        placeholder=gemini_placeholder,
+        help="Leave blank to use key from .env / environment variables.",
     )
+    if env_gemini_key and not gemini_input:
+        st.caption("🔒 *Loaded securely from environment (.env)*")
 
-    # Sync keys to pipeline and router
-    pipeline.update_keys(groq_key=groq_input, gemini_key=gemini_input)
+    # Resolve effective keys: manual input takes precedence over environment
+    effective_groq_key = groq_input.strip() if groq_input.strip() else env_groq_key
+    effective_gemini_key = gemini_input.strip() if gemini_input.strip() else env_gemini_key
+
+    # Sync resolved keys to pipeline and router
+    pipeline.update_keys(groq_key=effective_groq_key, gemini_key=effective_gemini_key)
 
     # 4-Model Fallback Chain Key Status Panel
     st.markdown("##### ⛓️ 4-Model Fallback Status")
